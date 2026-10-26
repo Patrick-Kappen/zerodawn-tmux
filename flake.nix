@@ -81,6 +81,9 @@
             nativeBuildInputs = [
               pkgs.tmux
               pkgs.bash
+              pkgs.git
+              pkgs.neovim-unwrapped
+              pkgs.util-linux
             ];
           }
           ''
