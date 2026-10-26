@@ -26,8 +26,7 @@
           }
         );
       inherit (nixpkgs) lib;
-      version = lib.trim (builtins.readFile ./VERSION);
-      # Every addon has its <name>.tmux, a README.md, an AGENTS.md and at least one test; a missing one fails the evaluation.
+      # Every addon has a VERSION, a CHANGELOG.md, its <name>.tmux, a README.md, an AGENTS.md and at least one test; a missing one fails the evaluation.
       checkAddon =
         name:
         let
@@ -56,6 +55,9 @@
       );
       plugin =
         pkgs: name:
+        let
+          version = lib.trim (builtins.readFile (./addons + "/${name}/VERSION"));
+        in
         pkgs.tmuxPlugins.mkTmuxPlugin {
           pluginName = "zerodawn-${name}";
           rtpFilePath = "${name}.tmux";
