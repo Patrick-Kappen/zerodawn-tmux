@@ -33,7 +33,9 @@ Needs `git` and `nvim` on the PATH of the tmux server. The addon binds no keys.
 ## Changes
 
 <!-- changelog:start -->
-No release yet.
+## 0.1.0 — 2026-10-26
+
+- First release.
 
 [All changes](CHANGELOG.md)
 <!-- changelog:end -->
