@@ -2,9 +2,9 @@
 
 Short records of choices that shape the repository. Newest at the top.
 
-## 3. One version for the repository (2026-10-25)
+## 3. A version for each addon (2026-10-26)
 
-`VERSION` and `CHANGELOG.md` cover all addons, and the tags are `v<version>`. Reason: nixos-config pins one tag, and a version for each addon adds release work that has no user now. Add versions for each addon when an addon gets users outside nixos-config.
+Each addon has `VERSION` and `CHANGELOG.md` and the tag `<addon>-v<version>`; the repository has `VERSION`, `CHANGELOG.md` and the tag `v<version>`. The version level comes from a `Change:` trailer on each commit. Reason: the same release model as zerodawn-pi, and an addon gets a new version only when it changed.
 
 ## 2. An addon binds no keys (2026-10-25)
 

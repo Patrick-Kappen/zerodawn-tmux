@@ -22,3 +22,11 @@ run-shell ${zerodawn-tmux.packages.${system}.<addon>.rtp}
 ## Develop
 
 `direnv allow` (or `nix develop`), then `just check`. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Changes
+
+<!-- changelog:start -->
+No release yet.
+
+[All changes](CHANGELOG.md)
+<!-- changelog:end -->
