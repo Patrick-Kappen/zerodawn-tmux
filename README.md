@@ -26,7 +26,11 @@ run-shell ${zerodawn-tmux.packages.${system}.<addon>.rtp}
 ## Changes
 
 <!-- changelog:start -->
-No release yet.
+## 0.1.0 — 2026-10-26
+
+### pair 0.1.0
+
+- First release.
 
 [All changes](CHANGELOG.md)
 <!-- changelog:end -->
