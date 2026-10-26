@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# zerodawn-pair: keep tmux clients and an nvim server on the same repo (session) and worktree (window).
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: zerodawn-pair [--tmux EXE] COMMAND ...
+  attach SERVER DIR    run in a new terminal: open DIR and attach a client paired with SERVER
+  open SERVER DIR      move every client paired with SERVER to DIR; exit 3 when no client is paired
+  register CLIENT SERVER
+  follow CLIENT        tell the nvim server of CLIENT to change to the worktree of the client
+  follow-session SID   follow for every client on session SID
+  forget CLIENT
+SERVER is the address of the nvim server (v:servername). --tmux EXE starts tmux with your config (default: tmux).
+EOF
+  exit 2
+}
+
+tmux_exe=tmux
+if [[ ${1-} == --tmux ]]; then
+  [[ $# -ge 2 ]] || usage
+  tmux_exe="$2"
+  shift 2
+fi
+[[ $# -ge 1 ]] || usage
+command -v "$tmux_exe" >/dev/null || {
+  echo "zerodawn-pair: tmux command '$tmux_exe' not found; give --tmux the path of your tmux wrapper" >&2
+  exit 1
+}
+t() { "$tmux_exe" "$@"; }
+
+# Fails inside a tmux hook show as a message in tmux, not only on stderr.
+report() {
+  echo "zerodawn-pair: $1" >&2
+  if [[ -n ${TMUX-} ]]; then t display-message "zerodawn-pair: $1" || true; fi
+}
+
+# resolve DIR: prints "REPO<TAB>WORKTREE<TAB>GIT<TAB>NAME", GIT is 1 for a git worktree.
+resolve() {
+  local dir="$1" common top
+  [[ -d $dir ]] || {
+    report "folder $dir does not exist"
+    return 1
+  }
+  dir="$(cd "$dir" && pwd -P)"
+  if top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)"; then
+    common="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir)"
+    local root="${common%/.git}"
+    printf '%s\t%s\t1\t%s\n' "$common" "$top" "$(basename "${root%.git}")"
+  else
+    printf '%s\t%s\t0\t%s\n' "$dir" "$dir" "$(basename "$dir")"
+  fi
+}
+
+# tmux names cannot hold "." or ":".
+clean_name() { printf '%s' "${1//[.:]/_}"; }
+
+session_of_repo() {
+  local id
+  while IFS= read -r id; do
+    [[ "$(t show-option -qv -t "$id" @repo)" == "$1" ]] && {
+      echo "$id"
+      return 0
+    }
+  done < <(t list-sessions -F '#{session_id}' 2>/dev/null || true)
+  return 1
+}
+
+window_of_worktree() {
+  local id
+  while IFS= read -r id; do
+    [[ "$(t show-option -wqv -t "$id" @worktree)" == "$2" ]] && {
+      echo "$id"
+      return 0
+    }
+  done < <(t list-windows -t "$1" -F '#{window_id}')
+  return 1
+}
+
+start_agent() {
+  local window="$1" agent
+  agent="$(t show-option -gqv @pair-agent)"
+  [[ -n $agent ]] && t send-keys -t "$window" "$agent" Enter
+  return 0
+}
+
+# ensure SERVER DIR: print the window id for DIR, and make the session and the window when missing.
+ensure() {
+  local server="$1" repo worktree git name session window branch base n=1 other
+  IFS=$'\t' read -r repo worktree git name < <(resolve "$2") || return 1
+  if session="$(session_of_repo "$repo")"; then
+    other="$(pair_of_session "$session" "$server")"
+    if [[ -n $other ]]; then
+      report "$name is open in the pair of $other; close that pair first"
+      return 4
+    fi
+  else
+    base="$(clean_name "$name")"
+    name="$base"
+    while t has-session -t "=$name" 2>/dev/null; do
+      n=$((n + 1))
+      name="$base-$n"
+    done
+    session="$(t new-session -d -s "$name" -c "$worktree" -P -F '#{session_id}')"
+    t set-option -t "$session" @repo "$repo"
+    window="$(t list-windows -t "$session" -F '#{window_id}' | head -n1)"
+    t set-option -w -t "$window" @worktree "$worktree"
+    [[ $git == 1 ]] && start_agent "$window"
+  fi
+  if ! window="$(window_of_worktree "$session" "$worktree")"; then
+    branch="$(git -C "$worktree" branch --show-current 2>/dev/null || true)"
+    window="$(t new-window -d -t "$session:" -c "$worktree" -n "$(clean_name "${branch:-$(basename "$worktree")}")" -P -F '#{window_id}')"
+    t set-option -w -t "$window" @worktree "$worktree"
+    [[ $git == 1 ]] && start_agent "$window"
+  fi
+  echo "$window"
+}
+
+# pair_of_session SESSION SERVER: print the server of another pair that has a client on SESSION.
+pair_of_session() {
+  local client value
+  while IFS= read -r client; do
+    value="$(t show-option -gqv "@pair-$client")"
+    [[ -n $value && $value != "$2" ]] && {
+      echo "$value"
+      return 0
+    }
+  done < <(t list-clients -t "$1" -F '#{client_name}')
+  return 0
+}
+
+clients_of() {
+  local client
+  while IFS= read -r client; do
+    [[ "$(t show-option -gqv "@pair-$client")" == "$1" ]] && echo "$client"
+  done < <(t list-clients -F '#{client_name}' 2>/dev/null || true)
+  return 0
+}
+
+# of_client CLIENT FORMAT: FORMAT for the current pane of CLIENT. display-message -c does not set the format target,
+# and the list-* commands do not expand user options for each item in every tmux version, so find the pane first.
+of_client() {
+  local name pane
+  while IFS=$'\t' read -r name pane; do
+    [[ $name == "$1" ]] && {
+      t display-message -p -t "$pane" "$2"
+      return 0
+    }
+  done < <(t list-clients -F $'#{client_name}\t#{pane_id}')
+  return 1
+}
+
+nvim_follow() {
+  local server="$1" dir="$2"
+  command -v nvim >/dev/null || {
+    report "no nvim on PATH; it is needed to reach the nvim server $server"
+    return 1
+  }
+  nvim --clean --headless --server "$server" \
+    --remote-expr "luaeval('require(\"zerodawn.pair\").follow(_A)', '${dir//\'/\'\'}')" >/dev/null 2>&1 || {
+    report "nvim server $server does not answer; start it again, then press the pair key in nvim"
+    return 1
+  }
+}
+
+follow() {
+  local client="$1" server dir
+  server="$(t show-option -gqv "@pair-$client")"
+  [[ -n $server ]] || return 0
+  dir="$(of_client "$client" '#{@worktree}')"
+  if [[ -z $dir ]]; then
+    dir="$(of_client "$client" '#{pane_current_path}')"
+    local repo worktree git name
+    IFS=$'\t' read -r repo worktree git name < <(resolve "$dir") || return 1
+    t set-option -w -t "$(of_client "$client" '#{window_id}')" @worktree "$worktree"
+    t set-option -t "$(of_client "$client" '#{session_id}')" @repo "$repo"
+    dir="$worktree"
+  fi
+  nvim_follow "$server" "$dir"
+}
+
+command="$1"
+shift
+case "$command" in
+attach)
+  [[ $# -eq 2 ]] || usage
+  [[ $1 != *\'* && $0 != *\'* ]] || {
+    echo "zerodawn-pair: the server address and the script path cannot hold a single quote" >&2
+    exit 2
+  }
+  window="$(ensure "$1" "$2")"
+  exec "$tmux_exe" attach-session -t "$window" \; \
+    run-shell "'$0' register '#{client_name}' '$1'" \; \
+    select-window -t "$window"
+  ;;
+open)
+  [[ $# -eq 2 ]] || usage
+  mapfile -t clients < <(clients_of "$1")
+  if [[ ${#clients[@]} -eq 0 ]]; then
+    echo "zerodawn-pair: no tmux client is paired with $1; press the pair key in nvim to open one" >&2
+    exit 3
+  fi
+  window="$(ensure "$1" "$2")"
+  for client in "${clients[@]}"; do t switch-client -c "$client" -t "$window"; done
+  ;;
+register)
+  [[ $# -eq 2 ]] || usage
+  t set-option -g "@pair-$1" "$2"
+  ;;
+forget)
+  [[ $# -eq 1 ]] || usage
+  t set-option -gu "@pair-$1"
+  ;;
+follow)
+  [[ $# -eq 1 ]] || usage
+  follow "$1"
+  ;;
+follow-session)
+  [[ $# -eq 1 ]] || usage
+  while IFS= read -r client; do follow "$client"; done < <(t list-clients -t "$1" -F '#{client_name}')
+  ;;
+*) usage ;;
+esac
