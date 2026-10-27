@@ -17,6 +17,7 @@ fail() {
 
 # The nix sandbox has no TERM; a tmux client needs one.
 export TERM=xterm-256color
+export LC_ALL=C.UTF-8
 export GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 git init -q -b main "$work/repo"
 git -C "$work/repo" commit -q --allow-empty -m init
@@ -73,11 +74,17 @@ grep -q '^agent-started$' <<<"$pane" || fail "open: agent not started"
 grep -q 'echo agent-started' <<<"$pane" && fail "open: the agent command shows as typed keys"
 
 # list prints the worktree windows; the agent column needs @pair-agent-process
-"$pair" list | grep -qP "^\Q$repo/.git\E\t\Q$feat\E\t@[0-9]+\t0$" || fail "list: feat window"
+list_out="$("$pair" list)"
+grep -qP "^\Q$repo/.git\E\t\Q$feat\E\t@[0-9]+\t0$" <<<"$list_out" || fail "list: feat window: $list_out"
 tmux set-option -g @pair-agent-process sleep
 tmux new-window -d -t repo: -n agent "sleep 60"
 tmux set-option -w -t repo:agent @worktree /agent
-"$pair" list | grep -qP "\t/agent\t@[0-9]+\t1$" || fail "list: agent column"
+for _ in $(seq 50); do
+  [[ "$(tmux display-message -p -t repo:agent '#{pane_current_command}')" == sleep ]] && break
+  sleep 0.1
+done
+list_out="$("$pair" list)"
+grep -qP "\t/agent\t@[0-9]+\t1$" <<<"$list_out" || fail "list: agent column: $list_out"
 tmux kill-window -t repo:agent
 
 # a folder outside git gets its own session and no agent
@@ -115,4 +122,62 @@ for _ in $(seq 50); do
   sleep 0.1
 done
 [[ -z "$(tmux show-option -gqv "@pair-$client")" ]] || fail "detach: client still registered"
+
+# tmux-resurrect hooks: keep an existing hook and append ours once
+mkdir "$work/bin"
+cat >"$work/bin/pi" <<EOF
+#!$(command -v bash)
+printf '%s\\n' "\$*" >> "$work/pi-args"
+exec sleep 60
+EOF
+chmod +x "$work/bin/pi"
+export PATH="$work/bin:$PATH"
+tmux set-environment -g PATH "$PATH"
+tmux set-environment -t repo PATH "$PATH"
+tmux set-option -g @resurrect-hook-post-save-all 'run-shell true'
+tmux run-shell "$here/pair.tmux"
+tmux run-shell "$here/pair.tmux"
+value="$(tmux show-option -gqv @resurrect-hook-post-save-all)"
+grep -q "'$pair' save-sessions" <<<"$value" || fail "resurrect save hook: '$value' has no pair command"
+grep -q 'run-shell true' <<<"$value" || fail "resurrect save hook dropped the existing hook"
+[[ "$(grep -o save-sessions <<<"$value" | wc -l)" -eq 1 ]] || fail "resurrect save hook added twice"
+value="$(tmux show-option -gqv @resurrect-hook-post-restore-all)"
+grep -q "'$pair' restore-sessions" <<<"$value" || fail "resurrect restore hook: '$value' has no pair command"
+
+# save: one entry for the pane that runs the agent and has a session id; no entry without an id
+tmux set-option -g @pair-session-file "$work/pi-sessions"
+tmux new-window -d -t repo: -n resurrect "sleep 60"
+tmux set-option -w -t repo:resurrect @worktree /resurrect
+for _ in $(seq 50); do
+  [[ "$(tmux display-message -p -t repo:resurrect '#{pane_current_command}')" == sleep ]] && break
+  sleep 0.1
+done
+resurrect_pane="$(tmux list-panes -t repo:resurrect -F '#{pane_id}')"
+tmux set-option -p -t "$resurrect_pane" @pair-agent-session sid-123
+tmux new-window -d -t repo: -n no-session "sleep 60"
+tmux set-option -w -t repo:no-session @worktree /no-session
+for _ in $(seq 50); do
+  [[ "$(tmux display-message -p -t repo:no-session '#{pane_current_command}')" == sleep ]] && break
+  sleep 0.1
+done
+"$pair" save-sessions
+lines="$(wc -l <"$work/pi-sessions")"
+[[ $lines -eq 1 ]] || fail "save-sessions: want one line, got $lines: $(cat "$work/pi-sessions"); panes: $(tmux list-panes -a -F '#{window_id} #{pane_current_command}')"
+grep -qP "\tsid-123$" "$work/pi-sessions" || fail "save-sessions: no sid-123"
+grep -q 'no-session' "$work/pi-sessions" && fail "save-sessions: saved a pane without a session id"
+
+# restore: find the pane by the session and pane indexes when @worktree did not survive, and run pi directly
+tmux set-option -wu -t repo:resurrect @worktree
+"$pair" restore-sessions
+for _ in $(seq 50); do
+  [[ -s $work/pi-args ]] && break
+  sleep 0.1
+done
+args="$(<"$work/pi-args")"
+[[ $args == "--session-id sid-123" ]] || fail "restore-sessions: pi got '$args', want --session-id sid-123"
+sleep 0.3
+pane_text="$(tmux capture-pane -p -t "$resurrect_pane")"
+grep -q 'pi --session-id' <<<"$pane_text" && fail "restore-sessions: the pi command shows as typed keys"
+tmux kill-window -t repo:no-session
+
 echo ok
