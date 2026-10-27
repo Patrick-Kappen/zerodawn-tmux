@@ -68,11 +68,14 @@ done
 [[ "$(of_client "$client" '#{@worktree}')" == "$repo" ]] || fail "open: @worktree"
 [[ "$(tmux list-windows -t repo | wc -l)" -eq 2 ]] || fail "open: want 2 windows in session repo"
 sleep 0.5
-tmux capture-pane -p -t "$(of_client "$client" '#{window_id}')" | grep -q agent-started || fail "open: agent not started"
+pane="$(tmux capture-pane -p -t "$(of_client "$client" '#{window_id}')")"
+grep -q '^agent-started$' <<<"$pane" || fail "open: agent not started"
+grep -q 'echo agent-started' <<<"$pane" && fail "open: the agent command shows as typed keys"
 
 # a folder outside git gets its own session and no agent
 "$pair" open "$server" "$work/plain"
 [[ "$(of_client "$client" '#{session_name}')" == plain ]] || fail "plain: session name"
+[[ -z "$(of_client "$client" '#{pane_start_command}')" ]] || fail "plain: the agent started outside git"
 
 # a window change in tmux makes the nvim server follow
 tmux switch-client -c "$client" -t repo
