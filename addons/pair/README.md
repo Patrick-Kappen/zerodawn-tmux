@@ -33,9 +33,9 @@ Needs `git` and `nvim` on the PATH of the tmux server. The addon binds no keys.
 ## Changes
 
 <!-- changelog:start -->
-## 0.1.0 — 2026-10-26
+## 0.1.1 — 2026-10-27
 
-- First release.
+- start the agent as the window command, not as typed keys
 
 [All changes](CHANGELOG.md)
 <!-- changelog:end -->
