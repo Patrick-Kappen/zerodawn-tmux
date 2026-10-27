@@ -72,6 +72,14 @@ pane="$(tmux capture-pane -p -t "$(of_client "$client" '#{window_id}')")"
 grep -q '^agent-started$' <<<"$pane" || fail "open: agent not started"
 grep -q 'echo agent-started' <<<"$pane" && fail "open: the agent command shows as typed keys"
 
+# list prints the worktree windows; the agent column needs @pair-agent-process
+"$pair" list | grep -qP "^\Q$repo/.git\E\t\Q$feat\E\t@[0-9]+\t0$" || fail "list: feat window"
+tmux set-option -g @pair-agent-process sleep
+tmux new-window -d -t repo: -n agent "sleep 60"
+tmux set-option -w -t repo:agent @worktree /agent
+"$pair" list | grep -qP "\t/agent\t@[0-9]+\t1$" || fail "list: agent column"
+tmux kill-window -t repo:agent
+
 # a folder outside git gets its own session and no agent
 "$pair" open "$server" "$work/plain"
 [[ "$(of_client "$client" '#{session_name}')" == plain ]] || fail "plain: session name"

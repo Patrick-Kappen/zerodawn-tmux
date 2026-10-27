@@ -11,6 +11,8 @@ set -g @pair-agent pi
 
 `@pair-agent`: the command that starts in a new worktree window. Empty: no command. A folder outside git never gets it. The command is the first command of the window, so no prompt and no typed keys show. When it exits, `default-shell` starts in the window. The command runs before any shell hook such as direnv; to load the environment of the folder, put it in the command, for example `direnv exec . pi`.
 
+`@pair-agent-process`: the process name of the agent, for example `pi`. `pair list` uses it to mark the windows where the agent runs.
+
 Needs `git` and `nvim` on the PATH of the tmux server. The addon binds no keys.
 
 ## Command: `scripts/pair`
