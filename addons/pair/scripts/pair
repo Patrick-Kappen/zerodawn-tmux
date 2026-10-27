@@ -11,6 +11,8 @@ usage: zerodawn-pair [--tmux EXE] COMMAND ...
   follow CLIENT        tell the nvim server of CLIENT to change to the worktree of the client
   follow-session SID   follow for every client on session SID
   forget CLIENT
+  list                 print one line per worktree window: REPO<TAB>WORKTREE<TAB>WINDOW<TAB>AGENT
+                       AGENT is 1 when a pane of the window runs the process @pair-agent-process, else 0
 SERVER is the address of the nvim server (v:servername). --tmux EXE starts tmux with your config (default: tmux).
 EOF
   exit 2
@@ -220,6 +222,22 @@ follow)
 follow-session)
   [[ $# -eq 1 ]] || usage
   while IFS= read -r client; do follow "$client"; done < <(t list-clients -t "$1" -F '#{client_name}')
+  ;;
+list)
+  [[ $# -eq 0 ]] || usage
+  process="$(t show-option -gqv @pair-agent-process 2>/dev/null || true)"
+  declare -A agent=()
+  if [[ -n $process ]]; then
+    while IFS=$'\t' read -r window cmd; do
+      [[ $cmd == "$process" ]] && agent[$window]=1
+    done < <(t list-panes -a -F '#{window_id}	#{pane_current_command}' 2>/dev/null || true)
+  fi
+  while IFS= read -r line; do
+    IFS=$'\t' read -r session window <<<"$line"
+    worktree="$(t show-option -wqv -t "$window" @worktree)"
+    [[ -n $worktree ]] || continue
+    printf '%s\t%s\t%s\t%s\n' "$(t show-option -qv -t "$session" @repo)" "$worktree" "$window" "${agent[$window]:-0}"
+  done < <(t list-windows -a -F '#{session_id}	#{window_id}' 2>/dev/null || true)
   ;;
 *) usage ;;
 esac
