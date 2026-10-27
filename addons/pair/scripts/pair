@@ -77,16 +77,18 @@ window_of_worktree() {
   return 1
 }
 
-start_agent() {
-  local window="$1" agent
+# window_command GIT: print the first command of a new window. The agent runs as that command, not as typed keys,
+# so the shell prompt and the typed command do not show; the shell starts when the agent exits.
+window_command() {
+  local agent
   agent="$(t show-option -gqv @pair-agent)"
-  [[ -n $agent ]] && t send-keys -t "$window" "$agent" Enter
-  return 0
+  [[ $1 == 1 && -n $agent ]] || return 0
+  printf '%s; exec %q' "$agent" "$(t show-option -gqv default-shell)"
 }
 
 # ensure SERVER DIR: print the window id for DIR, and make the session and the window when missing.
 ensure() {
-  local server="$1" repo worktree git name session window branch base n=1 other
+  local server="$1" repo worktree git name session window branch base n=1 other cmd
   IFS=$'\t' read -r repo worktree git name < <(resolve "$2") || return 1
   if session="$(session_of_repo "$repo")"; then
     other="$(pair_of_session "$session" "$server")"
@@ -101,17 +103,17 @@ ensure() {
       n=$((n + 1))
       name="$base-$n"
     done
-    session="$(t new-session -d -s "$name" -c "$worktree" -P -F '#{session_id}')"
+    cmd="$(window_command "$git")"
+    session="$(t new-session -d -s "$name" -c "$worktree" -P -F '#{session_id}' ${cmd:+"$cmd"})"
     t set-option -t "$session" @repo "$repo"
     window="$(t list-windows -t "$session" -F '#{window_id}' | head -n1)"
     t set-option -w -t "$window" @worktree "$worktree"
-    [[ $git == 1 ]] && start_agent "$window"
   fi
   if ! window="$(window_of_worktree "$session" "$worktree")"; then
     branch="$(git -C "$worktree" branch --show-current 2>/dev/null || true)"
-    window="$(t new-window -d -t "$session:" -c "$worktree" -n "$(clean_name "${branch:-$(basename "$worktree")}")" -P -F '#{window_id}')"
+    cmd="$(window_command "$git")"
+    window="$(t new-window -d -t "$session:" -c "$worktree" -n "$(clean_name "${branch:-$(basename "$worktree")}")" -P -F '#{window_id}' ${cmd:+"$cmd"})"
     t set-option -w -t "$window" @worktree "$worktree"
-    [[ $git == 1 ]] && start_agent "$window"
   fi
   echo "$window"
 }
