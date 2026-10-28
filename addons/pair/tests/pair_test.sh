@@ -134,12 +134,12 @@ chmod +x "$work/bin/pi"
 export PATH="$work/bin:$PATH"
 tmux set-environment -g PATH "$PATH"
 tmux set-environment -t repo PATH "$PATH"
-tmux set-option -g @resurrect-hook-post-save-all 'run-shell true'
+tmux set-option -g @resurrect-hook-post-save-all 'true'
 tmux run-shell "$here/pair.tmux"
 tmux run-shell "$here/pair.tmux"
 value="$(tmux show-option -gqv @resurrect-hook-post-save-all)"
 grep -q "'$pair' save-sessions" <<<"$value" || fail "resurrect save hook: '$value' has no pair command"
-grep -q 'run-shell true' <<<"$value" || fail "resurrect save hook dropped the existing hook"
+grep -q '^true; ' <<<"$value" || fail "resurrect save hook dropped the existing hook"
 [[ "$(grep -o save-sessions <<<"$value" | wc -l)" -eq 1 ]] || fail "resurrect save hook added twice"
 value="$(tmux show-option -gqv @resurrect-hook-post-restore-all)"
 grep -q "'$pair' restore-sessions" <<<"$value" || fail "resurrect restore hook: '$value' has no pair command"
@@ -160,7 +160,8 @@ for _ in $(seq 50); do
   [[ "$(tmux display-message -p -t repo:no-session '#{pane_current_command}')" == sleep ]] && break
   sleep 0.1
 done
-"$pair" save-sessions
+# tmux-resurrect runs a hook with eval in bash, so the hook value must be a shell command
+eval "$(tmux show-option -gqv @resurrect-hook-post-save-all)"
 lines="$(wc -l <"$work/pi-sessions")"
 [[ $lines -eq 1 ]] || fail "save-sessions: want one line, got $lines: $(cat "$work/pi-sessions"); panes: $(tmux list-panes -a -F '#{window_id} #{pane_current_command}')"
 grep -qP "\tsid-123$" "$work/pi-sessions" || fail "save-sessions: no sid-123"
@@ -168,7 +169,7 @@ grep -q 'no-session' "$work/pi-sessions" && fail "save-sessions: saved a pane wi
 
 # restore: find the pane by the session and pane indexes when @worktree did not survive, and run pi directly
 tmux set-option -wu -t repo:resurrect @worktree
-"$pair" restore-sessions
+eval "$(tmux show-option -gqv @resurrect-hook-post-restore-all)"
 for _ in $(seq 50); do
   [[ -s $work/pi-args ]] && break
   sleep 0.1
