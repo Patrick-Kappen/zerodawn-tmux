@@ -10,7 +10,7 @@ tmux addons in shell. Nix flake with one tmux plugin package for each addon.
 
 ## Rules
 
-- This repository holds addons, not a config. The tmux (tmuxw) config that loads them is in the owner's nixos-config. An addon binds no keys; the config binds them.
+- This repository holds addons, not a config. The tmux config that loads them is in the owner's nixos-config. An addon binds no keys; the config binds them.
 - The command line of an addon is a contract with zerodawn-nvim and zerodawn-pi. Do not change or remove a command or an option; add a new one.
 - Commit subject: `<scope>: what changed`, scope is an addon name, `release`, `ci`, `docs`, `flake`, `repo` or `deps`. Max 72 characters. Add one trailer `Change: fix|feature|breaking`; it sets the version level. The subjects become the changelog.
 - Work on a branch and worktree add ~/.worktrees and open a PR; `main` is protected by a hook.
