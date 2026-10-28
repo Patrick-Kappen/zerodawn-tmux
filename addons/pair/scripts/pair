@@ -13,6 +13,8 @@ usage: zerodawn-pair [--tmux EXE] COMMAND ...
   forget CLIENT
   list                 print one line per worktree window: REPO<TAB>WORKTREE<TAB>WINDOW<TAB>AGENT
                        AGENT is 1 when a pane of the window runs the process @pair-agent-process, else 0
+  save-sessions        tmux-resurrect hook: save the pi session id of every pane that runs the agent
+  restore-sessions     tmux-resurrect hook: start the saved pi sessions in the restored panes
 SERVER is the address of the nvim server (v:servername). --tmux EXE starts tmux with your config (default: tmux).
 EOF
   exit 2
@@ -141,6 +143,100 @@ clients_of() {
   return 0
 }
 
+expand_tilde() {
+  local tilde='~'
+  if [[ $1 == "$tilde" ]]; then
+    printf '%s\n' "$HOME"
+  elif [[ $1 == "$tilde"/* ]]; then
+    printf '%s/%s\n' "$HOME" "${1#"$tilde/"}"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+# session_file: the pi session store, next to the tmux-resurrect save unless @pair-session-file is set.
+session_file() {
+  local file
+  file="$(t show-option -gqv @pair-session-file 2>/dev/null || true)"
+  if [[ -z $file ]]; then
+    file="$(t show-option -gqv @resurrect-dir 2>/dev/null || true)"
+    file="${file:-${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect}/pair-agent-sessions"
+  fi
+  expand_tilde "$file"
+}
+
+# agent_process: the process name of the agent; a save or restore without it is a configuration error.
+agent_process() {
+  local process
+  process="$(t show-option -gqv @pair-agent-process 2>/dev/null || true)"
+  [[ -n $process ]] || {
+    report "option @pair-agent-process is not set; set it to the process name of the agent, for example pi"
+    return 1
+  }
+  printf '%s\n' "$process"
+}
+
+save_sessions() {
+  local file process pane command session window index repo worktree id tmp
+  file="$(session_file)"
+  process="$(agent_process)" || return 1
+  tmp="$file.tmp.$$"
+  mkdir -p "$(dirname "$file")" || return 1
+  : >"$tmp"
+  while IFS=$'\t' read -r pane command session window index; do
+    [[ $command == "$process" ]] || continue
+    id="$(t show-option -p -qv -t "$pane" @pair-agent-session 2>/dev/null || true)"
+    [[ -n $id ]] || continue
+    repo="$(t show-option -qv -t "$session" @repo 2>/dev/null || true)"
+    worktree="$(t show-option -wqv -t "$pane" @worktree 2>/dev/null || true)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$session" "$window" "$index" "$repo" "$worktree" "$id" >>"$tmp"
+  done < <(t list-panes -a -F $'#{pane_id}\t#{pane_current_command}\t#{session_name}\t#{window_index}\t#{pane_index}' 2>/dev/null || true)
+  mv "$tmp" "$file"
+}
+
+# find_pane SESSION WINDOW PANE REPO WORKTREE: the restored pane for a saved pi pane. Resurrect may not keep
+# @repo and @worktree, so the session and pane indexes are a fallback.
+find_pane() {
+  local session="$1" window="$2" index="$3" repo="$4" worktree="$5" pane s w i wrepo wwork
+  while IFS=$'\t' read -r pane s w i; do
+    [[ -n $worktree ]] || continue
+    wwork="$(t show-option -wqv -t "$pane" @worktree 2>/dev/null || true)"
+    [[ $wwork == "$worktree" ]] || continue
+    wrepo="$(t show-option -qv -t "$s" @repo 2>/dev/null || true)"
+    [[ -z $repo || $wrepo == "$repo" ]] || continue
+    [[ -z $index || $i == "$index" ]] && {
+      printf '%s\n' "$pane"
+      return 0
+    }
+  done < <(t list-panes -a -F $'#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}' 2>/dev/null || true)
+  while IFS=$'\t' read -r pane s w i; do
+    [[ $s == "$session" && $w == "$window" && $i == "$index" ]] && {
+      printf '%s\n' "$pane"
+      return 0
+    }
+  done < <(t list-panes -a -F $'#{pane_id}\t#{session_name}\t#{window_index}\t#{pane_index}' 2>/dev/null || true)
+  return 1
+}
+
+restore_sessions() {
+  local file session window index repo worktree id pane status=0
+  file="$(session_file)"
+  [[ -f $file ]] || return 0
+  while IFS=$'\t' read -r session window index repo worktree id; do
+    [[ -n $id ]] || continue
+    if ! pane="$(find_pane "$session" "$window" "$index" "$repo" "$worktree")"; then
+      report "no restored pane for pi session $id in worktree ${worktree:-$session:$window}; start it again with pi --session-id $id"
+      status=1
+      continue
+    fi
+    if ! t respawn-pane -k -t "$pane" "pi --session-id $(printf '%q' "$id")"; then
+      report "could not start pi --session-id $id in pane $pane; start it again by hand"
+      status=1
+    fi
+  done <"$file"
+  return "$status"
+}
+
 # of_client CLIENT FORMAT: FORMAT for the current pane of CLIENT. display-message -c does not set the format target,
 # and the list-* commands do not expand user options for each item in every tmux version, so find the pane first.
 of_client() {
@@ -223,20 +319,29 @@ follow-session)
   [[ $# -eq 1 ]] || usage
   while IFS= read -r client; do follow "$client"; done < <(t list-clients -t "$1" -F '#{client_name}')
   ;;
+save-sessions)
+  [[ $# -eq 0 ]] || usage
+  save_sessions
+  ;;
+restore-sessions)
+  [[ $# -eq 0 ]] || usage
+  restore_sessions
+  ;;
 list)
   [[ $# -eq 0 ]] || usage
   process="$(t show-option -gqv @pair-agent-process 2>/dev/null || true)"
   declare -A agent=()
   if [[ -n $process ]]; then
     while IFS=$'\t' read -r window cmd; do
-      [[ $cmd == "$process" ]] && agent[$window]=1
+      [[ -n $window && $cmd == "$process" ]] && agent["$window"]=1
     done < <(t list-panes -a -F '#{window_id}	#{pane_current_command}' 2>/dev/null || true)
   fi
   while IFS= read -r line; do
     IFS=$'\t' read -r session window <<<"$line"
+    [[ -n $window ]] || continue
     worktree="$(t show-option -wqv -t "$window" @worktree)"
     [[ -n $worktree ]] || continue
-    printf '%s\t%s\t%s\t%s\n' "$(t show-option -qv -t "$session" @repo)" "$worktree" "$window" "${agent[$window]:-0}"
+    printf '%s\t%s\t%s\t%s\n' "$(t show-option -qv -t "$session" @repo)" "$worktree" "$window" "${agent["$window"]:-0}"
   done < <(t list-windows -a -F '#{session_id}	#{window_id}' 2>/dev/null || true)
   ;;
 *) usage ;;

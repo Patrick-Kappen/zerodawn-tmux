@@ -7,11 +7,22 @@ Keeps tmux clients and an nvim server on the same place: one tmux session for ea
 ```
 run-shell ${zerodawn-tmux.packages.<system>.pair.rtp}
 set -g @pair-agent pi
+set -g @pair-agent-process pi
 ```
 
 `@pair-agent`: the command that starts in a new worktree window. Empty: no command. A folder outside git never gets it. The command is the first command of the window, so no prompt and no typed keys show. When it exits, `default-shell` starts in the window. The command runs before any shell hook such as direnv; to load the environment of the folder, put it in the command, for example `direnv exec . pi`.
 
-`@pair-agent-process`: the process name of the agent, for example `pi`. `pair list` uses it to mark the windows where the agent runs.
+`@pair-agent-process`: the process name of the agent, for example `pi`. `pair list` uses it to mark the windows where the agent runs; the resurrect hooks use it to find the panes whose pi session to save.
+
+`@pair-agent-session`: a pane option, not a global one. The pi extension sets it to the pi session id of the pi process in that pane. The agent extension owns this option: the addon only reads it when tmux-resurrect saves, and it writes nothing there. Without the option a pi pane has no session to restore.
+
+`@pair-session-file`: where the save hook writes the pi session ids. Default: `pair-agent-sessions` in `@resurrect-dir`, or in `${XDG_DATA_HOME:-~/.local/share}/tmux/resurrect` when that option is unset.
+
+## tmux-resurrect
+
+The addon appends its commands to `@resurrect-hook-post-save-all` and `@resurrect-hook-post-restore-all`; an existing hook stays. On a save, `pair save-sessions` writes one line for each pane whose `pane_current_command` is `@pair-agent-process` and that has `@pair-agent-session`: session name, window index, pane index, `@repo`, `@worktree` and the session id. On a restore, `pair restore-sessions` finds the pane by `@worktree` and `@repo`, or by the session and pane indexes when resurrect did not keep the options, and starts it with `pi --session-id <id>` as the pane command. That command is never typed into a shell, so the shell prompt and the command do not show; the shell starts when pi exits.
+
+A pane that the restore cannot find gets an error with the id, so the session can be started by hand. The addon needs tmux-resurrect only for the hooks; without it these commands do nothing.
 
 Needs `git` and `nvim` on the PATH of the tmux server. The addon binds no keys.
 
@@ -25,6 +36,8 @@ Needs `git` and `nvim` on the PATH of the tmux server. The addon binds no keys.
 | `open SERVER DIR` | Moves every client of SERVER to DIR. Exit 3: no client is paired. Exit 4: another pair has the repo open. |
 | `follow CLIENT`, `follow-session SID` | Hooks: make the nvim server change to the worktree of the client. |
 | `register CLIENT SERVER`, `forget CLIENT` | Pair and unpair a client. |
+| `save-sessions` | tmux-resurrect post-save hook: save the pi session id of each pane that runs the agent. |
+| `restore-sessions` | tmux-resurrect post-restore hook: start `pi --session-id <id>` in the restored panes. |
 
 ## Rules
 
