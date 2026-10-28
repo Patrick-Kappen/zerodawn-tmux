@@ -9,7 +9,7 @@ tmux set-hook -g 'client-detached[90]' "run-shell -b \"'$pair' forget '#{hook_cl
 # tmux-resurrect runs these options after its save and restore. Keep an existing hook and add ours once.
 add_resurrect_hook() {
   local name="$1" command current
-  command="run-shell -b \"'$pair' $2\""
+  command="'$pair' $2"
   current="$(tmux show-option -gqv "@resurrect-hook-$name" 2>/dev/null || true)"
   [[ $current == *"'$pair' $2"* ]] && return 0
   tmux set-option -g "@resurrect-hook-$name" "${current:+$current; }$command"
