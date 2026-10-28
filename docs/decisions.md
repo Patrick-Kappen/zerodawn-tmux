@@ -12,4 +12,4 @@ An addon sets hooks and options, and gives commands. The tmux config binds the k
 
 ## 1. Addons here, the config in nixos-config (2026-10-25)
 
-This repository holds addons only: code that does one task and has tests. The tmuxw config (options, plugin choice, keys) stays in nixos-config. Reason: the same split as zerodawn-pi and pi. Addons get versions, tests and CI, and the config stays quick to change.
+This repository holds addons only: code that does one task and has tests. The tmux config (options, plugin choice, keys) stays in nixos-config. Reason: the same split as zerodawn-pi and pi. Addons get versions, tests and CI, and the config stays quick to change.
